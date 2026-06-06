@@ -1,0 +1,284 @@
+import os
+import numpy as np
+import pandas as pd
+import requests
+import yfinance as yf
+from datetime import datetime, timedelta
+
+BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
+CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
+
+TODAY = datetime.today()
+START_DATE = (TODAY - timedelta(days=180)).strftime('%Y-%m-%d')
+END_DATE = TODAY.strftime('%Y-%m-%d')
+
+
+def calc_rsi(prices, period=14):
+    delta = prices.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def calc_ema(series, period=9):
+    return series.ewm(span=period, adjust=False).mean()
+
+
+def calc_wma(series, period=45):
+    weights = np.arange(1, period + 1)
+    return series.rolling(period).apply(lambda x: np.dot(x, weights) / weights.sum(), raw=True)
+
+
+def get_signal(rsi, ema9, wma45):
+    if rsi <= 25 and ema9 > wma45:
+        return '🟢 MUA'
+    elif rsi >= 75 and ema9 < wma45:
+        return '🔴 BÁN'
+    elif rsi <= 35:
+        return '🟡 TÍCH LŨY'
+    elif ema9 > wma45:
+        return '📈 UPTREND'
+    elif ema9 < wma45:
+        return '📉 DOWNTREND'
+    else:
+        return '⚪ TRUNG TÍNH'
+
+
+def fetch_vnstock(symbol, data_type='stock'):
+    try:
+        from vnstock import stock_historical_data
+        df = stock_historical_data(
+            symbol=symbol,
+            start_date=START_DATE,
+            end_date=END_DATE,
+            resolution='1D',
+            type=data_type,
+            beautify=True
+        )
+        if df is None or df.empty:
+            print(f"[WARN] No data returned for {symbol}")
+            return None
+        df = df.sort_values('time').reset_index(drop=True)
+        return df
+    except Exception as e:
+        print(f"[ERROR] vnstock fetch failed for {symbol}: {e}")
+        return None
+
+
+def analyze_ticker(symbol, data_type='stock'):
+    df = fetch_vnstock(symbol, data_type)
+    if df is None or len(df) < 50:
+        return None
+
+    close = df['close']
+    rsi = calc_rsi(close)
+    ema9 = calc_ema(rsi)
+    wma45 = calc_wma(rsi)
+
+    last_rsi = rsi.iloc[-1]
+    last_ema9 = ema9.iloc[-1]
+    last_wma45 = wma45.iloc[-1]
+    last_close = close.iloc[-1]
+
+    # 5-day change
+    if len(close) >= 6:
+        chg5d = (close.iloc[-1] / close.iloc[-6] - 1) * 100
+    else:
+        chg5d = 0.0
+
+    signal = get_signal(last_rsi, last_ema9, last_wma45)
+
+    return {
+        'symbol': symbol,
+        'price': last_close,
+        'rsi': last_rsi,
+        'ema9': last_ema9,
+        'wma45': last_wma45,
+        'chg5d': chg5d,
+        'signal': signal,
+    }
+
+
+def fetch_macro():
+    result = {}
+    try:
+        brent = yf.Ticker('BZ=F')
+        brent_hist = brent.history(period='5d')
+        result['brent'] = brent_hist['Close'].iloc[-1] if not brent_hist.empty else None
+    except Exception as e:
+        print(f"[ERROR] Brent fetch failed: {e}")
+        result['brent'] = None
+
+    try:
+        dxy = yf.Ticker('DX-Y.NYB')
+        dxy_hist = dxy.history(period='5d')
+        result['dxy'] = dxy_hist['Close'].iloc[-1] if not dxy_hist.empty else None
+    except Exception as e:
+        print(f"[ERROR] DXY fetch failed: {e}")
+        result['dxy'] = None
+
+    try:
+        sp = yf.Ticker('^GSPC')
+        sp_hist = sp.history(period='10d')
+        if not sp_hist.empty and len(sp_hist) >= 6:
+            sp_chg = (sp_hist['Close'].iloc[-1] / sp_hist['Close'].iloc[-6] - 1) * 100
+        elif not sp_hist.empty:
+            sp_chg = (sp_hist['Close'].iloc[-1] / sp_hist['Close'].iloc[0] - 1) * 100
+        else:
+            sp_chg = None
+        result['sp_chg'] = sp_chg
+    except Exception as e:
+        print(f"[ERROR] S&P500 fetch failed: {e}")
+        result['sp_chg'] = None
+
+    return result
+
+
+def macro_score(brent, dxy, sp_chg):
+    score = 0
+    if brent is not None:
+        if 70 <= brent <= 95:
+            score += 1
+        elif brent > 95:
+            score -= 1
+        # else 0 (below 70 is also concerning but not explicitly negative in spec)
+    if dxy is not None:
+        if dxy < 100:
+            score += 1
+        elif dxy > 103:
+            score -= 1
+    if sp_chg is not None:
+        if sp_chg > 1:
+            score += 1
+        elif sp_chg < -1:
+            score -= 1
+    return score
+
+
+def build_recommendation(vnindex_data, stock_results):
+    all_signals = []
+    if vnindex_data:
+        all_signals.append(vnindex_data['signal'])
+    for r in stock_results:
+        if r:
+            all_signals.append(r['signal'])
+
+    mua_tickers = [r['symbol'] for r in stock_results if r and r['signal'] == '🟢 MUA']
+    downtrend_count = sum(1 for s in all_signals if 'DOWNTREND' in s)
+    uptrend_count = sum(1 for s in all_signals if 'UPTREND' in s)
+
+    if mua_tickers:
+        tickers_str = ', '.join(mua_tickers)
+        return f"Có tín hiệu mua xuất hiện tại {tickers_str}. Kiểm tra thêm volume và xác nhận xu hướng trước khi vào lệnh."
+    elif downtrend_count >= len(all_signals) * 0.6:
+        return "Thị trường downtrend, chưa có tín hiệu mua. Quan sát vùng hỗ trợ và chờ RSI về vùng tích lũy."
+    elif uptrend_count >= len(all_signals) * 0.6:
+        return "Thị trường đang trong uptrend. Duy trì danh mục, tránh mua đuổi khi RSI cao."
+    else:
+        return "Thị trường phân hóa. Ưu tiên cổ phiếu có RSI <= 35 và EMA9 hướng lên. Quản lý rủi ro chặt."
+
+
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        'chat_id': CHAT_ID,
+        'text': text,
+        'parse_mode': 'HTML',
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=15)
+        resp.raise_for_status()
+        print(f"[OK] Telegram message sent (status {resp.status_code})")
+    except Exception as e:
+        print(f"[ERROR] Telegram send failed: {e}")
+
+
+def main():
+    date_str = TODAY.strftime('%d/%m/%Y')
+
+    print("Fetching VNINDEX...")
+    vnindex = analyze_ticker('VNINDEX', data_type='index')
+
+    stock_symbols = ['VCB', 'HPG', 'FPT', 'MBB', 'VIC', 'SSI']
+    stock_results = []
+    for sym in stock_symbols:
+        print(f"Fetching {sym}...")
+        result = analyze_ticker(sym, data_type='stock')
+        stock_results.append(result)
+
+    print("Fetching macro data...")
+    macro = fetch_macro()
+    brent = macro.get('brent')
+    dxy = macro.get('dxy')
+    sp_chg = macro.get('sp_chg')
+
+    score = macro_score(brent, dxy, sp_chg)
+    if score >= 2:
+        macro_bias = 'BULLISH 🟢'
+    elif score <= -1:
+        macro_bias = 'BEARISH 🔴'
+    else:
+        macro_bias = 'NEUTRAL ⚪'
+
+    # Build message
+    lines = []
+    lines.append('📊 <b>BÁO CÁO CHỨNG KHOÁN VN</b>')
+    lines.append(f'🗓 {date_str} | 08:30 ICT')
+    lines.append('')
+
+    # VNINDEX section
+    lines.append('🇻🇳 <b>VN-INDEX</b>')
+    if vnindex:
+        lines.append(
+            f"Điểm: {vnindex['price']:.0f} | 5d: {vnindex['chg5d']:+.2f}%"
+        )
+        lines.append(
+            f"RSI: {vnindex['rsi']:.1f} | EMA9: {vnindex['ema9']:.1f} | WMA45: {vnindex['wma45']:.1f}"
+        )
+        lines.append(f"→ {vnindex['signal']}")
+    else:
+        lines.append('Không lấy được dữ liệu VNINDEX')
+    lines.append('')
+
+    # Stock section
+    lines.append('📈 <b>TOP CỔ PHIẾU</b>')
+    for r in stock_results:
+        if r:
+            lines.append(
+                f"{r['symbol']} | RSI={r['rsi']:.1f} | {r['signal']} | 5d={r['chg5d']:+.2f}%"
+            )
+        else:
+            sym = stock_symbols[stock_results.index(r)] if r is None else r['symbol']
+            lines.append(f"{sym} | Không có dữ liệu")
+    lines.append('')
+
+    # Macro section
+    lines.append('🌐 <b>MACRO</b>')
+    brent_str = f'${brent:.1f}' if brent is not None else 'N/A'
+    dxy_str = f'{dxy:.1f}' if dxy is not None else 'N/A'
+    sp_str = f'{sp_chg:+.2f}%' if sp_chg is not None else 'N/A'
+    lines.append(f'Brent: {brent_str} | DXY: {dxy_str}')
+    lines.append(f'S&P500 5d: {sp_str}')
+    lines.append(f'Macro: {macro_bias}')
+    lines.append('')
+
+    # Recommendation
+    lines.append('⚡ <b>KHUYẾN NGHỊ</b>')
+    recommendation = build_recommendation(vnindex, stock_results)
+    lines.append(recommendation)
+    lines.append('')
+    lines.append('⚠️ <i>Không phải tư vấn tài chính</i>')
+
+    message = '\n'.join(lines)
+    print("--- MESSAGE PREVIEW ---")
+    print(message)
+    print("--- END PREVIEW ---")
+
+    send_telegram(message)
+
+
+if __name__ == '__main__':
+    main()
