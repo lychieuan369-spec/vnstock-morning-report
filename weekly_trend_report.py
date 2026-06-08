@@ -26,30 +26,37 @@ def send_telegram(text):
         print(f"[ERROR] Telegram send failed: {e}")
 
 def fetch_vnstock(symbol, data_type='stock'):
-    try:
-        from vnstock import Vnstock
-        source = 'TCBS' if data_type == 'index' else 'VCI'
-        stock = Vnstock().stock(symbol=symbol, source=source)
-        df = stock.quote.history(start=START_DATE, end=END_DATE, interval='1D')
-        if df is None or df.empty:
-            return None
-        df.columns = [c.lower() for c in df.columns]
-        col_map = {}
-        for col in df.columns:
-            if col in ('close', 'c', 'adjclose'): col_map[col] = 'close'
-            elif col in ('low', 'l'): col_map[col] = 'low'
-            elif col in ('high', 'h'): col_map[col] = 'high'
-            elif col in ('open', 'o'): col_map[col] = 'open'
-            elif col in ('volume', 'vol', 'v'): col_map[col] = 'volume'
-        if col_map:
-            df = df.rename(columns=col_map)
-        if 'time' not in df.columns and 'date' in df.columns:
-            df = df.rename(columns={'date': 'time'})
-        df = df.sort_values('time').reset_index(drop=True)
-        return df
-    except Exception as e:
-        print(f"[ERROR] fetch failed for {symbol}: {e}")
-        return None
+    sources = ['TCBS', 'VCI'] if data_type == 'index' else ['VCI', 'TCBS']
+    for source in sources:
+        try:
+            from vnstock import Vnstock
+            stock = Vnstock().stock(symbol=symbol, source=source)
+            df = stock.quote.history(start=START_DATE, end=END_DATE, interval='1D')
+            if df is None or df.empty:
+                print(f"[WARN] No data for {symbol} from {source}")
+                continue
+            df.columns = [c.lower() for c in df.columns]
+            col_map = {}
+            for col in df.columns:
+                if col in ('close', 'c', 'adjclose'): col_map[col] = 'close'
+                elif col in ('low', 'l'): col_map[col] = 'low'
+                elif col in ('high', 'h'): col_map[col] = 'high'
+                elif col in ('open', 'o'): col_map[col] = 'open'
+                elif col in ('volume', 'vol', 'v'): col_map[col] = 'volume'
+            if col_map:
+                df = df.rename(columns=col_map)
+            if 'time' not in df.columns and 'date' in df.columns:
+                df = df.rename(columns={'date': 'time'})
+            df = df.sort_values('time').reset_index(drop=True)
+            if len(df) >= 50:
+                print(f"[OK] {symbol} from {source}: {len(df)} rows")
+                return df
+            else:
+                print(f"[WARN] {symbol} from {source}: only {len(df)} rows")
+        except Exception as e:
+            print(f"[ERROR] {symbol} from {source}: {e}")
+            time.sleep(2)
+    return None
 
 def calc_ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
@@ -85,23 +92,26 @@ def calc_adx(df, period=14):
 
 def analyze_weekly(symbol, data_type='stock'):
     df = fetch_vnstock(symbol, data_type)
-    if df is None or len(df) < 200:
+    if df is None or len(df) < 50:
         print(f"[WARN] Not enough data for {symbol} (got {len(df) if df is not None else 0} rows)")
         return None
 
+    has_ema200 = len(df) >= 200
+    has_ema50 = len(df) >= 50
+
     close = df['close']
-    ema200 = calc_ema(close, 200)
-    ema50 = calc_ema(close, 50)
+    ema200 = calc_ema(close, 200) if has_ema200 else None
+    ema50 = calc_ema(close, 50) if has_ema50 else calc_ema(close, len(df) // 2)
     macd_line, signal_line, histogram = calc_macd(close)
     adx, di_plus, di_minus = calc_adx(df)
 
     last_close = close.iloc[-1]
-    last_ema200 = ema200.iloc[-1]
+    last_ema200 = ema200.iloc[-1] if ema200 is not None else None
     last_ema50 = ema50.iloc[-1]
     last_macd = macd_line.iloc[-1]
     last_signal = signal_line.iloc[-1]
     last_hist = histogram.iloc[-1]
-    prev_hist = histogram.iloc[-2]
+    prev_hist = histogram.iloc[-2] if len(histogram) >= 2 else 0
 
     # Weekly change
     if len(close) >= 6:
@@ -116,13 +126,17 @@ def analyze_weekly(symbol, data_type='stock'):
         chg_month = 0.0
 
     # Market regime
-    above_ema200 = last_close > last_ema200
+    above_ema200 = (last_close > last_ema200) if last_ema200 is not None else None
     above_ema50 = last_close > last_ema50
 
-    if above_ema200 and above_ema50:
+    if above_ema200 is True and above_ema50:
         regime = '🐂 BULL'
-    elif not above_ema200 and not above_ema50:
+    elif above_ema200 is False and not above_ema50:
         regime = '🐻 BEAR'
+    elif above_ema200 is None and above_ema50:
+        regime = '🐂 BULL*'  # * = no EMA200, based on EMA50 only
+    elif above_ema200 is None and not above_ema50:
+        regime = '🐻 BEAR*'
     else:
         regime = '⚪ TRUNG TÍNH'
 
@@ -141,9 +155,10 @@ def analyze_weekly(symbol, data_type='stock'):
     low_10d = df['low'].iloc[-10:].min() if 'low' in df.columns else close.iloc[-10:].min()
 
     entry = last_close
-    pullback_entry = last_ema50  # buy on pullback to EMA50
+    pullback_entry = last_ema50
     target = high_52w
-    stop_loss = min(last_ema200 * 0.99, low_10d)  # just below EMA200 or recent low
+    stop_loss_base = last_ema200 * 0.99 if last_ema200 is not None else last_ema50 * 0.95
+    stop_loss = min(stop_loss_base, low_10d)
 
     risk = entry - stop_loss
     reward = target - entry
@@ -175,7 +190,7 @@ def analyze_weekly(symbol, data_type='stock'):
     return {
         'symbol': symbol,
         'price': last_close,
-        'ema200': last_ema200,
+        'ema200': last_ema200 if last_ema200 is not None else 0,
         'ema50': last_ema50,
         'chg_week': chg_week,
         'chg_month': chg_month,
