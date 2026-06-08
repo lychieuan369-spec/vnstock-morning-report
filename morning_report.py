@@ -48,6 +48,17 @@ def get_signal(rsi, ema9, wma45):
         return '⚪ TRUNG TÍNH'
 
 
+def vol_badge(vol_ratio):
+    if vol_ratio is None:
+        return ''
+    if vol_ratio >= 1.5:
+        return f'✅ Vol {vol_ratio:.1f}x'
+    elif vol_ratio < 0.7:
+        return f'⚠️ Vol yếu {vol_ratio:.1f}x'
+    else:
+        return f'Vol {vol_ratio:.1f}x'
+
+
 def fetch_vnstock(symbol, data_type='stock'):
     try:
         from vnstock import Vnstock
@@ -110,6 +121,15 @@ def analyze_ticker(symbol, data_type='stock'):
     stop_loss = low_col.iloc[-5:].min()
     target = high_col.iloc[-20:].max()
 
+    # Volume confirmation
+    if 'volume' in df.columns:
+        vol_ma20 = df['volume'].rolling(20).mean()
+        last_vol = df['volume'].iloc[-1]
+        last_vol_ma20 = vol_ma20.iloc[-1]
+        vol_ratio = last_vol / last_vol_ma20 if last_vol_ma20 > 0 else 1.0
+    else:
+        vol_ratio = None
+
     signal = get_signal(last_rsi, last_ema9, last_wma45)
 
     return {
@@ -122,6 +142,7 @@ def analyze_ticker(symbol, data_type='stock'):
         'signal': signal,
         'stop_loss': stop_loss,
         'target': target,
+        'vol_ratio': vol_ratio,
     }
 
 
@@ -280,7 +301,8 @@ def main():
     if action_stocks:
         for r in action_stocks:
             lines.append(f"<b>{r['symbol']}</b> | {r['signal']}")
-            lines.append(f"  Giá: {r['price']:,.0f} | RSI: {r['rsi']:.1f} | 5d: {r['chg5d']:+.2f}%")
+            vol_str = vol_badge(r.get('vol_ratio'))
+            lines.append(f"  Giá: {r['price']:,.0f} | RSI: {r['rsi']:.1f} | 5d: {r['chg5d']:+.2f}% | {vol_str}")
             if r['signal'] == '🟢 MUA':
                 lines.append(f"  🎯 Mục tiêu: {r['target']:,.0f} | ✂️ Cắt lỗ: {r['stop_loss']:,.0f}")
             elif r['signal'] == '🔴 BÁN':
@@ -294,7 +316,8 @@ def main():
         lines.append('')
         lines.append('👁 <b>Theo dõi:</b>')
         for r in watch_stocks:
-            lines.append(f"{r['symbol']} | {r['signal']} | RSI: {r['rsi']:.1f} | 5d: {r['chg5d']:+.2f}%")
+            vol_str = vol_badge(r.get('vol_ratio'))
+            lines.append(f"{r['symbol']} | {r['signal']} | RSI: {r['rsi']:.1f} | 5d: {r['chg5d']:+.2f}% | {vol_str}")
 
     if no_data:
         lines.append(f"⚠️ Không lấy được: {', '.join(no_data)}")
