@@ -72,22 +72,27 @@ def analyze_ticker(symbol, data_type='stock'):
     df = fetch_vnstock(symbol, data_type)
     if df is None or len(df) < 50:
         return None
-
     close = df['close']
+
+    # Use 'low' and 'high' columns if available, else fallback to close
+    low_col = df['low'] if 'low' in df.columns else close
+    high_col = df['high'] if 'high' in df.columns else close
+
     rsi = calc_rsi(close)
     ema9 = calc_ema(rsi)
     wma45 = calc_wma(rsi)
-
     last_rsi = rsi.iloc[-1]
     last_ema9 = ema9.iloc[-1]
     last_wma45 = wma45.iloc[-1]
     last_close = close.iloc[-1]
 
-    # 5-day change
     if len(close) >= 6:
         chg5d = (close.iloc[-1] / close.iloc[-6] - 1) * 100
     else:
         chg5d = 0.0
+
+    stop_loss = low_col.iloc[-5:].min()
+    target = high_col.iloc[-20:].max()
 
     signal = get_signal(last_rsi, last_ema9, last_wma45)
 
@@ -99,6 +104,8 @@ def analyze_ticker(symbol, data_type='stock'):
         'wma45': last_wma45,
         'chg5d': chg5d,
         'signal': signal,
+        'stop_loss': stop_loss,
+        'target': target,
     }
 
 
@@ -239,20 +246,41 @@ def main():
             f"RSI: {vnindex['rsi']:.1f} | EMA9: {vnindex['ema9']:.1f} | WMA45: {vnindex['wma45']:.1f}"
         )
         lines.append(f"→ {vnindex['signal']}")
+        if vnindex['signal'] in ['🟢 MUA', '🔴 BÁN']:
+            lines.append(f"  🎯 Mục tiêu: {vnindex['target']:,.0f} | ✂️ Cắt lỗ: {vnindex['stop_loss']:,.0f}")
     else:
         lines.append('Không lấy được dữ liệu VNINDEX')
     lines.append('')
 
     # Stock section
     lines.append('📈 <b>TOP CỔ PHIẾU</b>')
-    for r in stock_results:
-        if r:
-            lines.append(
-                f"{r['symbol']} | RSI={r['rsi']:.1f} | {r['signal']} | 5d={r['chg5d']:+.2f}%"
-            )
-        else:
-            sym = stock_symbols[stock_results.index(r)] if r is None else r['symbol']
-            lines.append(f"{sym} | Không có dữ liệu")
+
+    action_stocks = [r for r in stock_results if r and r['signal'] in ['🟢 MUA', '🔴 BÁN', '🟡 TÍCH LŨY']]
+    watch_stocks = [r for r in stock_results if r and r['signal'] not in ['🟢 MUA', '🔴 BÁN', '🟡 TÍCH LŨY']]
+    no_data = [stock_symbols[i] for i, r in enumerate(stock_results) if r is None]
+
+    if action_stocks:
+        for r in action_stocks:
+            lines.append(f"<b>{r['symbol']}</b> | {r['signal']}")
+            lines.append(f"  Giá: {r['price']:,.0f} | RSI: {r['rsi']:.1f} | 5d: {r['chg5d']:+.2f}%")
+            if r['signal'] == '🟢 MUA':
+                lines.append(f"  🎯 Mục tiêu: {r['target']:,.0f} | ✂️ Cắt lỗ: {r['stop_loss']:,.0f}")
+            elif r['signal'] == '🔴 BÁN':
+                lines.append(f"  ✂️ Cắt lỗ nếu giữ: {r['stop_loss']:,.0f}")
+            elif r['signal'] == '🟡 TÍCH LŨY':
+                lines.append(f"  ✂️ Cắt lỗ: {r['stop_loss']:,.0f} | Chờ RSI tăng")
+    else:
+        lines.append('Không có tín hiệu MUA/BÁN/TÍCH LŨY hôm nay.')
+
+    if watch_stocks:
+        lines.append('')
+        lines.append('👁 <b>Theo dõi:</b>')
+        for r in watch_stocks:
+            lines.append(f"{r['symbol']} | {r['signal']} | RSI: {r['rsi']:.1f} | 5d: {r['chg5d']:+.2f}%")
+
+    if no_data:
+        lines.append(f"⚠️ Không lấy được: {', '.join(no_data)}")
+
     lines.append('')
 
     # Macro section
