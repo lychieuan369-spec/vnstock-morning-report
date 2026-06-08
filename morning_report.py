@@ -60,23 +60,47 @@ def vol_badge(vol_ratio):
 
 
 def quick_regime(symbol):
-    """Fast regime check: BULL/BEAR/? using EMA200 vs EMA50 vs price."""
+    """Regime check: returns dict with regime, RSI, EMA50, EMA200."""
     try:
         df = fetch_vnstock(symbol, data_type='stock')
         if df is None or len(df) < 50:
-            return '?'
+            return None
         close = df['close']
+
+        # RSI
+        delta = close.diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+        rs = avg_gain / avg_loss
+        rsi = (100 - (100 / (1 + rs))).iloc[-1]
+
         ema50 = calc_ema(close, 50).iloc[-1]
         ema200 = calc_ema(close, 200).iloc[-1] if len(df) >= 200 else None
         last = close.iloc[-1]
+
         above50 = bool(last > ema50)
         above200 = bool(last > ema200) if ema200 is not None else None
-        if above200 is True: return '🐂'
-        elif above200 is False: return '🐻'
-        elif above50: return '🐂'
-        else: return '🐻'
-    except:
-        return '?'
+
+        if above200 is True:
+            regime = '🐂 BULL'
+        elif above200 is False:
+            regime = '🐻 BEAR'
+        elif above50:
+            regime = '🐂 BULL*'
+        else:
+            regime = '🐻 BEAR*'
+
+        return {
+            'regime': regime,
+            'rsi': rsi,
+            'ema50': ema50,
+            'ema200': ema200,
+        }
+    except Exception as e:
+        print(f"[ERROR] quick_regime {symbol}: {e}")
+        return None
 
 
 def fetch_vnstock(symbol, data_type='stock'):
@@ -356,13 +380,20 @@ def main():
     lines.append(f'Macro: {macro_bias}')
     lines.append('')
 
-    lines.append('📌 <b>XU HƯỚNG TUẦN</b>')
-    bull_syms = [s for s in stock_symbols if regime_map.get(s) == '🐂']
-    bear_syms = [s for s in stock_symbols if regime_map.get(s) == '🐻']
-    if bull_syms:
-        lines.append(f"🐂 Bull: {', '.join(bull_syms)}")
-    if bear_syms:
-        lines.append(f"🐻 Bear: {', '.join(bear_syms)}")
+    lines.append('📌 <b>XU HƯỚNG TUẦN (EMA200)</b>')
+    bull_list = [(s, regime_map[s]) for s in stock_symbols if regime_map.get(s) and 'BULL' in regime_map[s]['regime']]
+    bear_list = [(s, regime_map[s]) for s in stock_symbols if regime_map.get(s) and 'BEAR' in regime_map[s]['regime']]
+
+    if bull_list:
+        lines.append('🐂 <b>Bull:</b>')
+        for s, r in bull_list:
+            ema200_str = f"{r['ema200']:,.0f}" if r['ema200'] else 'N/A'
+            lines.append(f"  {s} | RSI: {r['rsi']:.1f} | EMA50: {r['ema50']:,.0f} | EMA200: {ema200_str}")
+    if bear_list:
+        lines.append('🐻 <b>Bear:</b>')
+        for s, r in bear_list:
+            ema200_str = f"{r['ema200']:,.0f}" if r['ema200'] else 'N/A'
+            lines.append(f"  {s} | RSI: {r['rsi']:.1f} | EMA50: {r['ema50']:,.0f} | EMA200: {ema200_str}")
     lines.append('')
 
     # Recommendation
