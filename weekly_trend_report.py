@@ -137,18 +137,18 @@ def analyze_weekly(symbol, data_type='stock'):
         chg_month = 0.0
 
     # Market regime
-    above_ema200 = (last_close > last_ema200) if last_ema200 is not None else None
-    above_ema50 = last_close > last_ema50
+    above_ema200 = bool(last_close > last_ema200) if last_ema200 is not None else None
+    above_ema50 = bool(last_close > last_ema50)
 
     if above_ema200 is True and above_ema50:
         regime = '🐂 BULL'
     elif above_ema200 is True and not above_ema50:
         # Above long-term trend but short-term pullback — still bullish structure
         regime = '🐂 BULL'
+    elif above_ema200 is False and not above_ema50:
+        regime = '🐻 BEAR'
     elif above_ema200 is False and above_ema50:
         # Below long-term trend but short-term bounce — bearish structure
-        regime = '🐻 BEAR'
-    elif above_ema200 is False and not above_ema50:
         regime = '🐻 BEAR'
     elif above_ema200 is None and above_ema50:
         regime = '🐂 BULL*'  # * = no EMA200, based on EMA50 only
