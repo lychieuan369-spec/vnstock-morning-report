@@ -67,6 +67,16 @@ def calc_macd(close):
     histogram = macd_line - signal_line
     return macd_line, signal_line, histogram
 
+def calc_rsi(close, period=14):
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.ewm(alpha=1/period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/period, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, float('nan'))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
 def calc_adx(df, period=14):
     try:
         high = df['high']
@@ -103,9 +113,12 @@ def analyze_weekly(symbol, data_type='stock'):
     macd_line, signal_line, histogram = calc_macd(close)
     adx, di_plus, di_minus = calc_adx(df)
 
+    rsi = calc_rsi(close)
+
     last_close = close.iloc[-1]
     last_ema200 = ema200.iloc[-1] if ema200 is not None else None
     last_ema50 = ema50.iloc[-1]
+    last_rsi = rsi.iloc[-1]
     last_macd = macd_line.iloc[-1]
     last_signal = signal_line.iloc[-1]
     last_hist = histogram.iloc[-1]
@@ -129,6 +142,12 @@ def analyze_weekly(symbol, data_type='stock'):
 
     if above_ema200 is True and above_ema50:
         regime = '🐂 BULL'
+    elif above_ema200 is True and not above_ema50:
+        # Above long-term trend but short-term pullback — still bullish structure
+        regime = '🐂 BULL'
+    elif above_ema200 is False and above_ema50:
+        # Below long-term trend but short-term bounce — bearish structure
+        regime = '🐻 BEAR'
     elif above_ema200 is False and not above_ema50:
         regime = '🐻 BEAR'
     elif above_ema200 is None and above_ema50:
@@ -188,6 +207,7 @@ def analyze_weekly(symbol, data_type='stock'):
     return {
         'symbol': symbol,
         'price': last_close,
+        'rsi': last_rsi,
         'ema200': last_ema200 if last_ema200 is not None else 0,
         'ema50': last_ema50,
         'chg_week': chg_week,
@@ -266,6 +286,7 @@ def main():
         lines.append(f'🐂 <b>BULL MARKET ({len(bull)} mã)</b>')
         for s, r in bull:
             lines.append(f"<b>{s}</b> | {r['macd_signal']} | Tuần: {r['chg_week']:+.2f}%")
+            lines.append(f"  RSI: {r['rsi']:.1f} | EMA50: {r['ema50']:,.0f} | EMA200: {r['ema200']:,.0f}")
             lines.append(f"  📥 Mua: {r['entry']:,.0f} | Pullback: {r['pullback_entry']:,.0f}")
             lines.append(f"  🎯 Target: {r['target']:,.0f} | ✂️ StopLoss: {r['stop_loss']:,.0f}")
             rr_str = f"{r['rr']:.1f}" if r['rr'] > 0 else 'N/A'
