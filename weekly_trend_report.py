@@ -136,6 +136,19 @@ def analyze_weekly(symbol, data_type='stock'):
     else:
         macd_signal = '📉 Giảm'
 
+    # Entry, target, stoploss, R/R
+    high_52w = df['high'].iloc[-252:].max() if 'high' in df.columns else close.iloc[-252:].max()
+    low_10d = df['low'].iloc[-10:].min() if 'low' in df.columns else close.iloc[-10:].min()
+
+    entry = last_close
+    pullback_entry = last_ema50  # buy on pullback to EMA50
+    target = high_52w
+    stop_loss = min(last_ema200 * 0.99, low_10d)  # just below EMA200 or recent low
+
+    risk = entry - stop_loss
+    reward = target - entry
+    rr = reward / risk if risk > 0 else 0
+
     # ADX trend strength
     if adx is not None:
         if adx > 30:
@@ -170,6 +183,11 @@ def analyze_weekly(symbol, data_type='stock'):
         'macd_signal': macd_signal,
         'adx_str': adx_str,
         'strategy': strategy,
+        'entry': entry,
+        'pullback_entry': pullback_entry,
+        'target': target,
+        'stop_loss': stop_loss,
+        'rr': rr,
     }
 
 def fetch_macro_weekly():
@@ -234,7 +252,11 @@ def main():
     if bull:
         lines.append(f'🐂 <b>BULL MARKET ({len(bull)} mã)</b>')
         for s, r in bull:
-            lines.append(f"{s} | {r['macd_signal']} | Tuần: {r['chg_week']:+.2f}% | {r['strategy']}")
+            lines.append(f"<b>{s}</b> | {r['macd_signal']} | Tuần: {r['chg_week']:+.2f}%")
+            lines.append(f"  📥 Mua: {r['entry']:,.0f} | Pullback: {r['pullback_entry']:,.0f}")
+            lines.append(f"  🎯 Target: {r['target']:,.0f} | ✂️ StopLoss: {r['stop_loss']:,.0f}")
+            rr_str = f"{r['rr']:.1f}" if r['rr'] > 0 else 'N/A'
+            lines.append(f"  ⚖️ R/R: 1:{rr_str} | {r['strategy']}")
         lines.append('')
 
     if neutral:
