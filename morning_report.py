@@ -59,6 +59,26 @@ def vol_badge(vol_ratio):
         return f'Vol {vol_ratio:.1f}x'
 
 
+def quick_regime(symbol):
+    """Fast regime check: BULL/BEAR/? using EMA200 vs EMA50 vs price."""
+    try:
+        df = fetch_vnstock(symbol, data_type='stock')
+        if df is None or len(df) < 50:
+            return '?'
+        close = df['close']
+        ema50 = calc_ema(close, 50).iloc[-1]
+        ema200 = calc_ema(close, 200).iloc[-1] if len(df) >= 200 else None
+        last = close.iloc[-1]
+        above50 = bool(last > ema50)
+        above200 = bool(last > ema200) if ema200 is not None else None
+        if above200 is True: return '🐂'
+        elif above200 is False: return '🐻'
+        elif above50: return '🐂'
+        else: return '🐻'
+    except:
+        return '?'
+
+
 def fetch_vnstock(symbol, data_type='stock'):
     sources = ['VCI', 'KBS'] if data_type == 'index' else ['KBS', 'VCI']
     for source in sources:
@@ -251,6 +271,12 @@ def main():
         stock_results.append(result)
         time.sleep(4)
 
+    # Quick regime for weekly summary line
+    regime_map = {}
+    for sym in stock_symbols:
+        regime_map[sym] = quick_regime(sym)
+        time.sleep(3)
+
     print("Fetching macro data...")
     macro = fetch_macro()
     brent = macro.get('brent')
@@ -328,6 +354,15 @@ def main():
     lines.append(f'Brent: {brent_str} | DXY: {dxy_str}')
     lines.append(f'S&P500 5d: {sp_str}')
     lines.append(f'Macro: {macro_bias}')
+    lines.append('')
+
+    lines.append('📌 <b>XU HƯỚNG TUẦN</b>')
+    bull_syms = [s for s in stock_symbols if regime_map.get(s) == '🐂']
+    bear_syms = [s for s in stock_symbols if regime_map.get(s) == '🐻']
+    if bull_syms:
+        lines.append(f"🐂 Bull: {', '.join(bull_syms)}")
+    if bear_syms:
+        lines.append(f"🐻 Bear: {', '.join(bear_syms)}")
     lines.append('')
 
     # Recommendation
