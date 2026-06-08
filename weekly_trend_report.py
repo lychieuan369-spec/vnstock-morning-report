@@ -26,30 +26,34 @@ def send_telegram(text):
         print(f"[ERROR] Telegram send failed: {e}")
 
 def fetch_vnstock(symbol, data_type='stock'):
-    try:
-        from vnstock import Vnstock
-        stock = Vnstock().stock(symbol=symbol, source='TCBS')
-        df = stock.quote.history(start=START_DATE, end=END_DATE, interval='1D')
-        if df is None or df.empty:
-            print(f"[WARN] No data returned for {symbol}")
-            return None
-        df.columns = [c.lower() for c in df.columns]
-        col_map = {}
-        for col in df.columns:
-            if col in ('close', 'c', 'adjclose'): col_map[col] = 'close'
-            elif col in ('low', 'l'): col_map[col] = 'low'
-            elif col in ('high', 'h'): col_map[col] = 'high'
-            elif col in ('open', 'o'): col_map[col] = 'open'
-            elif col in ('volume', 'vol', 'v'): col_map[col] = 'volume'
-        if col_map:
-            df = df.rename(columns=col_map)
-        if 'time' not in df.columns and 'date' in df.columns:
-            df = df.rename(columns={'date': 'time'})
-        df = df.sort_values('time').reset_index(drop=True)
-        return df
-    except Exception as e:
-        print(f"[ERROR] vnstock fetch failed for {symbol}: {e}")
-        return None
+    for source in ['VCI', 'MSN']:
+        try:
+            from vnstock import Vnstock
+            stock = Vnstock().stock(symbol=symbol, source=source)
+            df = stock.quote.history(start=START_DATE, end=END_DATE, interval='1D')
+            if df is None or df.empty:
+                print(f"[WARN] No data for {symbol} from {source}")
+                continue
+            df.columns = [c.lower() for c in df.columns]
+            col_map = {}
+            for col in df.columns:
+                if col in ('close', 'c', 'adjclose'): col_map[col] = 'close'
+                elif col in ('low', 'l'): col_map[col] = 'low'
+                elif col in ('high', 'h'): col_map[col] = 'high'
+                elif col in ('open', 'o'): col_map[col] = 'open'
+                elif col in ('volume', 'vol', 'v'): col_map[col] = 'volume'
+            if col_map:
+                df = df.rename(columns=col_map)
+            if 'time' not in df.columns and 'date' in df.columns:
+                df = df.rename(columns={'date': 'time'})
+            df = df.sort_values('time').reset_index(drop=True)
+            if len(df) >= 10:
+                print(f"[OK] {symbol} from {source}: {len(df)} rows")
+                return df
+        except Exception as e:
+            print(f"[ERROR] {symbol} from {source}: {e}")
+            time.sleep(2)
+    return None
 
 def calc_ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
