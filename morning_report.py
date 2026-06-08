@@ -49,18 +49,18 @@ def get_signal(rsi, ema9, wma45):
 
 def fetch_vnstock(symbol, data_type='stock'):
     try:
-        from vnstock import stock_historical_data
-        df = stock_historical_data(
-            symbol=symbol,
-            start_date=START_DATE,
-            end_date=END_DATE,
-            resolution='1D',
-            type=data_type,
-            beautify=True
-        )
+        from vnstock import Vnstock
+        source = 'TCBS' if data_type == 'index' else 'VCI'
+        stock = Vnstock().stock(symbol=symbol, source=source)
+        df = stock.quote.history(start=START_DATE, end=END_DATE, interval='1D')
         if df is None or df.empty:
             print(f"[WARN] No data returned for {symbol}")
             return None
+        # Normalize column names to lowercase
+        df.columns = [c.lower() for c in df.columns]
+        # Rename 'time' or 'date' column
+        if 'time' not in df.columns and 'date' in df.columns:
+            df = df.rename(columns={'date': 'time'})
         df = df.sort_values('time').reset_index(drop=True)
         return df
     except Exception as e:
