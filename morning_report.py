@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 import pandas as pd
 import requests
@@ -58,6 +59,21 @@ def fetch_vnstock(symbol, data_type='stock'):
             return None
         # Normalize column names to lowercase
         df.columns = [c.lower() for c in df.columns]
+        # Handle column name variants
+        col_map = {}
+        for col in df.columns:
+            if col in ('close', 'c', 'adjclose', 'adj close'):
+                col_map[col] = 'close'
+            elif col in ('low', 'l'):
+                col_map[col] = 'low'
+            elif col in ('high', 'h'):
+                col_map[col] = 'high'
+            elif col in ('open', 'o'):
+                col_map[col] = 'open'
+            elif col in ('volume', 'vol', 'v'):
+                col_map[col] = 'volume'
+        if col_map:
+            df = df.rename(columns=col_map)
         # Rename 'time' or 'date' column
         if 'time' not in df.columns and 'date' in df.columns:
             df = df.rename(columns={'date': 'time'})
@@ -208,6 +224,7 @@ def main():
 
     print("Fetching VNINDEX...")
     vnindex = analyze_ticker('VNINDEX', data_type='index')
+    time.sleep(4)
 
     stock_symbols = ['VCB', 'HPG', 'FPT', 'MBB', 'VIC', 'SSI', 'VHM', 'TCB', 'ACB', 'BID', 'CTG', 'GAS', 'MSN', 'PLX', 'VRE', 'VPB', 'MSR']
     stock_results = []
@@ -215,6 +232,7 @@ def main():
         print(f"Fetching {sym}...")
         result = analyze_ticker(sym, data_type='stock')
         stock_results.append(result)
+        time.sleep(4)
 
     print("Fetching macro data...")
     macro = fetch_macro()
