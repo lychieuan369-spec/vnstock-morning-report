@@ -26,7 +26,8 @@ def send_telegram(text):
         print(f"[ERROR] Telegram send failed: {e}")
 
 def fetch_vnstock(symbol, data_type='stock'):
-    for source in ['VCI', 'MSN']:
+    sources = ['VCI', 'KBS'] if data_type == 'index' else ['KBS', 'VCI']
+    for source in sources:
         try:
             from vnstock import Vnstock
             stock = Vnstock().stock(symbol=symbol, source=source)
