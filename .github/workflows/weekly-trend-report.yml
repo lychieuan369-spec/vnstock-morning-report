@@ -1,0 +1,22 @@
+name: VN Stock Weekly Trend Report
+
+on:
+  schedule:
+    - cron: '0 9 * * 5'  # 16:00 ICT Friday (UTC+7 = 09:00 UTC)
+  workflow_dispatch:
+
+jobs:
+  weekly-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install vnstock>=3.0.0 yfinance>=0.2.0 pandas>=2.0.0 numpy>=1.24.0 requests>=2.31.0
+      - name: Run weekly trend report
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python weekly_trend_report.py
