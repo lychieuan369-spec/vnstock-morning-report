@@ -62,30 +62,21 @@ def vol_badge(vol_ratio):
 def fetch_vnstock(symbol, data_type='stock'):
     try:
         from vnstock import Vnstock
-        source = 'TCBS' if data_type == 'index' else 'VCI'
-        stock = Vnstock().stock(symbol=symbol, source=source)
+        stock = Vnstock().stock(symbol=symbol, source='TCBS')
         df = stock.quote.history(start=START_DATE, end=END_DATE, interval='1D')
         if df is None or df.empty:
             print(f"[WARN] No data returned for {symbol}")
             return None
-        # Normalize column names to lowercase
         df.columns = [c.lower() for c in df.columns]
-        # Handle column name variants
         col_map = {}
         for col in df.columns:
-            if col in ('close', 'c', 'adjclose', 'adj close'):
-                col_map[col] = 'close'
-            elif col in ('low', 'l'):
-                col_map[col] = 'low'
-            elif col in ('high', 'h'):
-                col_map[col] = 'high'
-            elif col in ('open', 'o'):
-                col_map[col] = 'open'
-            elif col in ('volume', 'vol', 'v'):
-                col_map[col] = 'volume'
+            if col in ('close', 'c', 'adjclose'): col_map[col] = 'close'
+            elif col in ('low', 'l'): col_map[col] = 'low'
+            elif col in ('high', 'h'): col_map[col] = 'high'
+            elif col in ('open', 'o'): col_map[col] = 'open'
+            elif col in ('volume', 'vol', 'v'): col_map[col] = 'volume'
         if col_map:
             df = df.rename(columns=col_map)
-        # Rename 'time' or 'date' column
         if 'time' not in df.columns and 'date' in df.columns:
             df = df.rename(columns={'date': 'time'})
         df = df.sort_values('time').reset_index(drop=True)
