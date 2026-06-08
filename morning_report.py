@@ -202,7 +202,7 @@ def main():
     print("Fetching VNINDEX...")
     vnindex = analyze_ticker('VNINDEX', data_type='index')
 
-    stock_symbols = ['VCB', 'HPG', 'FPT', 'MBB', 'VIC', 'SSI']
+    stock_symbols = ['VCB', 'HPG', 'FPT', 'MBB', 'VIC', 'SSI', 'VHM', 'TCB', 'ACB', 'BID', 'CTG', 'GAS', 'MSN', 'PLX', 'VRE', 'VPB', 'MSR']
     stock_results = []
     for sym in stock_symbols:
         print(f"Fetching {sym}...")
