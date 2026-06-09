@@ -21,15 +21,15 @@ def send_telegram(text):
         print(f"[ERROR] Telegram send failed: {e}")
 
 def fetch_intraday(symbol):
-    """Fetch today's intraday price data."""
+    """Fetch today's intraday 1H data — phiên sáng 9:00-11:30."""
     try:
         from vnstock import Vnstock
         stock = Vnstock().stock(symbol=symbol, source='KBS')
-        # Get last 2 days daily to compute today vs yesterday
+        # Fetch last 2 days of 1H data
         end = TODAY.strftime('%Y-%m-%d')
-        start = (TODAY - timedelta(days=5)).strftime('%Y-%m-%d')
-        df = stock.quote.history(start=start, end=end, interval='1D')
-        if df is None or df.empty or len(df) < 1:
+        start = (TODAY - timedelta(days=2)).strftime('%Y-%m-%d')
+        df = stock.quote.history(start=start, end=end, interval='1H')
+        if df is None or df.empty:
             return None
         df.columns = [c.lower() for c in df.columns]
         col_map = {}
@@ -41,51 +41,64 @@ def fetch_intraday(symbol):
             elif col in ('volume', 'vol', 'v'): col_map[col] = 'volume'
         if col_map:
             df = df.rename(columns=col_map)
+        if 'time' not in df.columns and 'date' in df.columns:
+            df = df.rename(columns={'date': 'time'})
+        df['time'] = pd.to_datetime(df['time'])
         df = df.sort_values('time').reset_index(drop=True)
 
-        last = df.iloc[-1]
-        prev = df.iloc[-2] if len(df) >= 2 else None
+        # Filter today's session only (9:00-12:00 local)
+        today_str = TODAY.strftime('%Y-%m-%d')
+        today_bars = df[df['time'].dt.strftime('%Y-%m-%d') == today_str]
 
-        last_close = last['close']
-        last_open = last.get('open', last_close)
-        last_high = last.get('high', last_close)
-        last_low = last.get('low', last_close)
-        last_vol = last.get('volume', 0)
+        if today_bars.empty:
+            # Fallback: use last available bars
+            today_bars = df.tail(4)
 
-        prev_close = prev['close'] if prev is not None else last_close
+        if today_bars.empty:
+            return None
 
-        chg_pct = (last_close - prev_close) / prev_close * 100 if prev_close > 0 else 0
-        chg_from_open = (last_close - last_open) / last_open * 100 if last_open > 0 else 0
+        open_price = today_bars['open'].iloc[0]
+        last_close = today_bars['close'].iloc[-1]
+        session_high = today_bars['high'].max() if 'high' in today_bars.columns else last_close
+        session_low = today_bars['low'].min() if 'low' in today_bars.columns else last_close
+        total_vol = today_bars['volume'].sum() if 'volume' in today_bars.columns else 0
 
-        # Volume vs yesterday
-        prev_vol = prev.get('volume', last_vol) if prev is not None else last_vol
-        vol_ratio = last_vol / prev_vol if prev_vol > 0 else 1.0
+        chg_from_open = (last_close - open_price) / open_price * 100 if open_price > 0 else 0
+
+        # RSI on H1 closes (need at least 15 bars — use all available)
+        all_today = df.tail(20)
+        rsi_val = None
+        if len(all_today) >= 5:
+            close_s = all_today['close']
+            delta = close_s.diff()
+            gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+            loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+            rs = gain / loss
+            rsi_series = 100 - (100 / (1 + rs))
+            rsi_val = rsi_series.iloc[-1]
+
+        # Momentum: last 2 bars direction
+        if len(today_bars) >= 2:
+            momentum = today_bars['close'].iloc[-1] - today_bars['close'].iloc[-2]
+        else:
+            momentum = 0
 
         return {
             'symbol': symbol,
-            'close': last_close,
-            'open': last_open,
-            'high': last_high,
-            'low': last_low,
-            'chg_pct': chg_pct,
-            'chg_from_open': chg_from_open,
-            'vol_ratio': vol_ratio,
+            'open': open_price,
+            'last': last_close,
+            'high': session_high,
+            'low': session_low,
+            'chg_pct': chg_from_open,
+            'volume': total_vol,
+            'rsi_h1': rsi_val,
+            'momentum': momentum,
+            'bars': len(today_bars),
         }
     except Exception as e:
         print(f"[ERROR] {symbol}: {e}")
         return None
 
-def price_arrow(chg):
-    if chg >= 2: return '🚀'
-    elif chg >= 0.5: return '📈'
-    elif chg > -0.5: return '➡️'
-    elif chg > -2: return '📉'
-    else: return '💥'
-
-def vol_str(ratio):
-    if ratio >= 1.5: return f'✅ Vol {ratio:.1f}x'
-    elif ratio < 0.7: return f'⚠️ Vol {ratio:.1f}x'
-    else: return f'Vol {ratio:.1f}x'
 
 def main():
     date_str = TODAY.strftime('%d/%m/%Y')
@@ -100,30 +113,46 @@ def main():
     valid = [r for r in results if r is not None]
     no_data = [STOCK_SYMBOLS[i] for i, r in enumerate(results) if r is None]
 
-    # Sort by % change
+    lines = []
+    lines.append('📊 <b>BÁO CÁO PHIÊN SÁNG — DỰ ĐOÁN CHIỀU</b>')
+    lines.append(f'🗓 {date_str} | 14:00 ICT')
+    lines.append('')
+
     gainers = sorted([r for r in valid if r['chg_pct'] >= 0.5], key=lambda x: x['chg_pct'], reverse=True)
     losers = sorted([r for r in valid if r['chg_pct'] <= -0.5], key=lambda x: x['chg_pct'])
     neutral = [r for r in valid if -0.5 < r['chg_pct'] < 0.5]
 
-    lines = []
-    lines.append('📊 <b>BÁO CÁO CHIỀU — INTRADAY</b>')
-    lines.append(f'🗓 {date_str} | 14:00 ICT')
-    lines.append('')
-
     if gainers:
-        lines.append(f'🚀 <b>TĂNG ({len(gainers)} mã)</b>')
+        lines.append(f'🚀 <b>TĂNG PHIÊN SÁNG ({len(gainers)} mã)</b>')
         for r in gainers:
-            arrow = price_arrow(r['chg_pct'])
-            lines.append(f"{arrow} <b>{r['symbol']}</b> {r['chg_pct']:+.2f}% | Giá: {r['close']:,.0f} | {vol_str(r['vol_ratio'])}")
+            rsi_str = f"RSI H1: {r['rsi_h1']:.0f}" if r['rsi_h1'] is not None else ''
+            mom = '↑' if r['momentum'] > 0 else '↓'
+            lines.append(f"<b>{r['symbol']}</b> {r['chg_pct']:+.2f}% {mom} | Giá: {r['last']:,.0f} | {rsi_str}")
             lines.append(f"   Open: {r['open']:,.0f} | High: {r['high']:,.0f} | Low: {r['low']:,.0f}")
+            # Afternoon prediction
+            if r['rsi_h1'] is not None and r['rsi_h1'] >= 70 and r['momentum'] < 0:
+                pred = '⚠️ RSI cao + momentum yếu — có thể điều chỉnh chiều'
+            elif r['chg_pct'] >= 2 and r['momentum'] > 0:
+                pred = '💪 Đà tăng mạnh — có thể tiếp tục chiều'
+            else:
+                pred = '➡️ Theo dõi thêm'
+            lines.append(f"   → {pred}")
         lines.append('')
 
     if losers:
-        lines.append(f'💥 <b>GIẢM ({len(losers)} mã)</b>')
+        lines.append(f'💥 <b>GIẢM PHIÊN SÁNG ({len(losers)} mã)</b>')
         for r in losers:
-            arrow = price_arrow(r['chg_pct'])
-            lines.append(f"{arrow} <b>{r['symbol']}</b> {r['chg_pct']:+.2f}% | Giá: {r['close']:,.0f} | {vol_str(r['vol_ratio'])}")
+            rsi_str = f"RSI H1: {r['rsi_h1']:.0f}" if r['rsi_h1'] is not None else ''
+            mom = '↑' if r['momentum'] > 0 else '↓'
+            lines.append(f"<b>{r['symbol']}</b> {r['chg_pct']:+.2f}% {mom} | Giá: {r['last']:,.0f} | {rsi_str}")
             lines.append(f"   Open: {r['open']:,.0f} | High: {r['high']:,.0f} | Low: {r['low']:,.0f}")
+            if r['rsi_h1'] is not None and r['rsi_h1'] <= 30 and r['momentum'] > 0:
+                pred = '🔄 RSI thấp + momentum đảo — có thể phục hồi chiều'
+            elif r['chg_pct'] <= -2 and r['momentum'] < 0:
+                pred = '🔴 Áp lực bán mạnh — tránh bắt đáy'
+            else:
+                pred = '➡️ Theo dõi thêm'
+            lines.append(f"   → {pred}")
         lines.append('')
 
     if neutral:
@@ -131,18 +160,20 @@ def main():
         lines.append(', '.join([f"{r['symbol']} {r['chg_pct']:+.1f}%" for r in neutral]))
         lines.append('')
 
-    # Market summary
     avg_chg = sum(r['chg_pct'] for r in valid) / len(valid) if valid else 0
-    if avg_chg >= 1:
-        market_mood = '🟢 Thị trường tích cực — xem xét giữ qua ATC'
-    elif avg_chg <= -1:
-        market_mood = '🔴 Thị trường tiêu cực — cân nhắc chốt lời/cắt lỗ trước ATC'
-    else:
-        market_mood = '⚪ Thị trường trung tính — giữ nguyên, chờ tín hiệu rõ hơn'
+    bull_count = len(gainers)
+    bear_count = len(losers)
 
-    lines.append('⚡ <b>NHẬN ĐỊNH 14H</b>')
-    lines.append(f"TB danh mục: {avg_chg:+.2f}%")
-    lines.append(market_mood)
+    lines.append('⚡ <b>DỰ ĐOÁN PHIÊN CHIỀU</b>')
+    lines.append(f"Phiên sáng: {bull_count} tăng / {bear_count} giảm | TB: {avg_chg:+.2f}%")
+    if avg_chg >= 1 and bull_count > bear_count:
+        lines.append('🟢 Xu hướng tích cực — chiều có thể tiếp đà tăng')
+    elif avg_chg <= -1 and bear_count > bull_count:
+        lines.append('🔴 Áp lực bán — chiều thận trọng, hạn chế mua đuổi')
+    elif bull_count > bear_count:
+        lines.append('⚪ Phân hóa nghiêng tăng — chọn lọc mã mạnh')
+    else:
+        lines.append('⚪ Thị trường phân hóa — chờ tín hiệu rõ hơn')
 
     if no_data:
         lines.append('')
