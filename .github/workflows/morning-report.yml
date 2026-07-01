@@ -1,6 +1,8 @@
 name: VN Stock Morning Report
 
 on:
+  schedule:
+    - cron: '30 1 * * 1-5'  # 8:30 ICT (UTC+7), T2-T6
   workflow_dispatch:
 
 jobs:
