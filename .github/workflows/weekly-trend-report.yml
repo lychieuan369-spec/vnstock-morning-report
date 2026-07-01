@@ -1,6 +1,8 @@
 name: VN Stock Weekly Trend Report
 
 on:
+  schedule:
+    - cron: '0 9 * * 5'  # 16:00 ICT (UTC+7), thứ 6
   workflow_dispatch:
 
 jobs:
