@@ -340,5 +340,9 @@ def main():
     print("--- END PREVIEW ---")
     send_telegram(message)
 
+    import json as _json
+    with open("latest_report.json", "w", encoding="utf-8") as _f:
+        _json.dump({"raw_text": message, "generated_at": str(__import__("datetime").datetime.now())}, _f, ensure_ascii=False)
+
 if __name__ == '__main__':
     main()

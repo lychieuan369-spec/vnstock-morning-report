@@ -5,6 +5,9 @@ on:
     - cron: '0 9 * * 5'  # 16:00 ICT (UTC+7), thứ 6
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   weekly-report:
     runs-on: ubuntu-latest
@@ -20,3 +23,12 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python weekly_trend_report.py
+      - name: Save report to repo
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Actions"
+          git add latest_report.json
+          git diff --cached --quiet || git commit -m "chore: update latest_report.json [skip ci]"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
