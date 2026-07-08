@@ -1,8 +1,7 @@
 name: VN Stock Afternoon Report
 
 on:
-  schedule:
-    - cron: '0 7 * * 1-5'  # 14:00 ICT (UTC+7), T2-T6
+  # schedule trigger moved to Railway Cron (GitHub Actions schedule had 2.5-4.7h queue delay)
   workflow_dispatch:
 
 jobs:
